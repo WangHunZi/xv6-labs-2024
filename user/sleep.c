@@ -3,7 +3,7 @@
 
 int main(int argc, char *argv[]) {
   if (argc == 1) {
-    printf("Usage: sleep <seconds>\n");
+    fprintf(2, "Usage: sleep <seconds>\n");
     exit(1);
   } else {
     sleep(atoi(argv[1]));
