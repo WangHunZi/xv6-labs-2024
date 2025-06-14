@@ -4,7 +4,7 @@
 #include "kernel/fs.h"
 #include "kernel/fcntl.h"
 
-void find(char *path, char *name) {
+void find(char *path, char *pattern) {
   struct dirent de;
   struct stat st;
   int fd;
@@ -23,7 +23,7 @@ void find(char *path, char *name) {
     char *p = path + strlen(path);
     while ((p > path) && ((*(--p)) != '/'));
     if (*p == '/') p ++;
-    if (strcmp(p, name) == 0) {
+    if (matchhere(pattern, p) != 0) {
       printf("%s\n", path);
     }
   } else if (st.type == T_DIR) {
@@ -49,12 +49,12 @@ void find(char *path, char *name) {
         continue;
       }
       if (st.type == T_DIR) {
-        if (strcmp(de.name, name) == 0) {
+        if (matchhere(pattern, de.name) != 0) {
           printf("%s\n", buf);
         }
-        find(buf, name);
+        find(buf, pattern);
       } else if (st.type == T_FILE) {
-        if (strcmp(de.name, name) == 0) {
+        if (matchhere(pattern, de.name) != 0) {
           printf("%s\n", buf);
         }
       }
