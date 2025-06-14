@@ -42,7 +42,8 @@ void find(char *path, char *name) {
       strcpy(buf, path);
       p = buf+strlen(buf);
       *p++ = '/';
-      memmove(p, de.name, DIRSIZ);
+      memmove(p, de.name, strlen(de.name));
+      p[strlen(de.name)] = '\0';
       if(stat(buf, &st) < 0) {
         printf("cannot stat %s\n", buf);
         continue;
@@ -58,6 +59,7 @@ void find(char *path, char *name) {
         }
       }
     }
+    close(fd);
   }
 }
 
