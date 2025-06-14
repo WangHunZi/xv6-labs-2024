@@ -8,6 +8,8 @@ int main(int argc, char *argv[]) {
   int pid = fork();
   char buf[2];
   if (pid == 0) {
+    close(p1[1]);
+    close(p2[0]);
     while (read(p1[0], buf, 1) == 0);
     close(p1[0]);
     printf("%d: received ping\n", getpid());
@@ -15,6 +17,8 @@ int main(int argc, char *argv[]) {
     close(p2[1]);
     exit(0);
   } else if (pid > 0) {
+    close(p1[0]);
+    close(p2[1]);
     write(p1[1], "p", 1);
     close(p1[1]);
     // wait(0); // lead to deadlock?
