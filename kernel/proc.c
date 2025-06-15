@@ -54,6 +54,7 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->state = UNUSED;
+      p->trace = 0;
       p->kstack = KSTACK((int) (p - proc));
   }
 }
@@ -288,6 +289,7 @@ fork(void)
     return -1;
   }
 
+  np->trace = p->trace;
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
