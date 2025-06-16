@@ -1,0 +1,26 @@
+{
+    "files.associations": {
+        "fcntl.h": "c",
+        "user.h": "c",
+        "types.h": "c",
+        "stat.h": "c",
+        "param.h": "c",
+        "exception": "c",
+        "memory_resource": "c",
+        "iosfwd": "c",
+        "new": "c",
+        "ostream": "c",
+        "sstream": "c",
+        "streambuf": "c"
+    },
+    "editor.formatOnSave": false,
+    "editor.formatOnPaste": false,
+    "editor.formatOnType": false,
+    "editor.codeActionsOnSave": {},
+    "C_Cpp.formatting": "disabled",
+    "C_Cpp.clang_format_style": "none",
+    "files.exclude": {
+        "**/.git": true,
+        "**/.DS_Store": true
+    }
+}
