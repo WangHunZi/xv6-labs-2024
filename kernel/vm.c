@@ -489,32 +489,29 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 
 #ifdef LAB_PGTBL
 void
-vmprint(pagetable_t pagetable) {
-  printf("page table %p\n", pagetable);
+walkprint(pagetable_t pagetable, int level) {
+  if (level > 3) return;
   for (int i = 0; i < 512; i++) {
     pte_t pte = pagetable[i];
     uint64 pa = i * PGSIZE;
     pagetable_t pg = (pagetable_t)PTE2PA(pte);
     if (pte & PTE_V) {
-      printf("..%p: pte %p pa %p\n", (void *)pa, (void*)pte, (void *)pg);
-      for (int j = 0; j < 512; j++) {
-        pte_t pte1 = pg[j];
-        uint64 pa1 = j * PGSIZE;
-        pagetable_t pg1 = (pagetable_t)PTE2PA(pte1);
-        if (pte1 & PTE_V) {
-          printf(".. ..%p: pte %p pa %p\n", (void *)pa1, (void*)pte1, (void *)pg1);
-          for (int k = 0; k < 512; k++) {
-            pte_t pte2 = pg1[k];
-            uint64 pa2 = k * PGSIZE;
-            pagetable_t pg2 = (pagetable_t)PTE2PA(pte2);
-            if (pte2 & PTE_V) {
-              printf(".. .. ..%p: pte %p pa %p\n", (void *)pa2, (void*)pte2, (void *)pg2);
-            }
-          }
-        }
+      if (level == 1) {
+        printf("..");
+      } else if (level == 2) {
+        printf(".. ..");
+      } else if (level == 3) {
+        printf(".. .. ..");
       }
+      printf("%p: pte %p pa %p\n", (void *)pa, (void*)pte, (void *)pg);
+      walkprint(pg, level + 1);
     }
   }
+}
+void
+vmprint(pagetable_t pagetable) {
+  printf("page table %p\n", pagetable);
+  walkprint(pagetable, 1);
 }
 #endif
 
