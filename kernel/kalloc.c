@@ -10,6 +10,7 @@
 #include "defs.h"
 
 void freerange(void *pa_start, void *pa_end);
+void freerangesuper(void *pa_start, void *pa_end);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -21,13 +22,25 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+} kmem, kmemsuper;
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  initlock(&kmemsuper.lock, "kmemsuper");
+  freerange(end, (void*)(PHYSTOP - 10 * SUPERPGSIZE));
+  freerangesuper((void*)(PHYSTOP - 10 * SUPERPGSIZE), (void*)PHYSTOP);
+}
+
+void
+freerangesuper(void *pa_start, void *pa_end)
+{
+  char *p;
+  p = (char*)SUPERPGROUNDUP((uint64)pa_start);
+  for (; p + SUPERPGSIZE <= (char*)pa_end; p += SUPERPGSIZE) {
+    superfree(p);
+  }
 }
 
 void
@@ -79,4 +92,37 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+void *superalloc() {
+  struct run *r;
+
+  acquire(&kmemsuper.lock);
+  r = kmemsuper.freelist;
+  if(r) {
+    kmemsuper.freelist = r->next;
+  }
+  release(&kmemsuper.lock);
+
+  if(r) {
+    memset((char*)r, 5, SUPERPGSIZE); // fill with junk
+  }
+  return (void*)r;
+}
+
+void superfree(void *pa) {
+  struct run *r;
+
+  if(((uint64)pa % SUPERPGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+    panic("superfree");
+
+  // Fill with junk to catch dangling refs.
+  memset(pa, 1, SUPERPGSIZE);
+
+  r = (struct run*)pa;
+
+  acquire(&kmemsuper.lock);
+  r->next = kmemsuper.freelist;
+  kmemsuper.freelist = r;
+  release(&kmemsuper.lock);
 }
