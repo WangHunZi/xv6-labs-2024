@@ -100,17 +100,17 @@ sys_sigalarm(void)
   uint64 handler;
   argint(0, &interval);
   argaddr(1, &handler);
-  struct proc* proc = myproc();
 
-  printf("proc %p\n", (void *)(proc->trapframe->a1));
-  printf("proc %p\n", (void *)handler);
+  struct proc* proc = myproc();
+  if (interval < 0) {
+    printf("sys_sigalarm: invalid interval %d\n", interval);
+    proc->alarm.ticks = 0;
+    proc->alarm.handler = 0;
+    return -1;
+  }
 
   proc->alarm.interval = interval;
   proc->alarm.handler = (alarm_handler)(void *)handler;
-  if (proc->alarm.handler == 0) {
-    printf("sys_sigalarm: handler is NULL\n");
-    return -1;
-  }
   return 0;
 }
 
@@ -119,7 +119,7 @@ sys_sigreturn(void)
 {
   struct proc* proc = myproc();
   proc->alarm.ticks = 0;
-  proc->alarm.interval = 0;
-  proc->alarm.handler  = 0;
-  return 0;
+  proc->alarm.active = 0;
+  memmove(proc->trapframe, proc->alarm.trapframe, sizeof(struct trapframe));
+  return proc->trapframe->a0;
 }
