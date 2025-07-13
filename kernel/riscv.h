@@ -382,4 +382,4 @@ typedef uint64 *pagetable_t; // 512 PTEs
 // that have the high bit set.
 #define MAXVA (1L << (9 + 9 + 9 + 12 - 1))
 
-#define index(pa) ((uint64)(pa) / PGSIZE)
+#define index(pa) (((uint64)(pa) - KERNBASE) / PGSIZE)

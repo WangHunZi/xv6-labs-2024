@@ -14,7 +14,7 @@ void freerange(void *pa_start, void *pa_end);
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
 
-static int ref[PHYSTOP / PGSIZE];
+static int ref[(PHYSTOP - KERNBASE) / PGSIZE];
 
 struct run {
   struct run *next;
