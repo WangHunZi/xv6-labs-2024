@@ -315,7 +315,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -324,18 +323,19 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if (flags & PTE_W)
+      flags = (flags & ~PTE_W) | PTE_C;
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
       goto err;
     }
+    // we can't use *pte |= flags to instead here.
+    *pte = PA2PTE(pa) | flags;
+    kincrement((void *)pa);
   }
   return 0;
 
  err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 0);
   return -1;
 }
 
@@ -366,10 +366,36 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
-       (*pte & PTE_W) == 0)
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
       return -1;
+
     pa0 = PTE2PA(*pte);
+    int count = krefcount((void *)pa0);
+    // If the PTE is marked as COW, we need to handle it.
+    if ((*pte & PTE_C) != 0) {
+      if (count >= 2) {
+        int flags = PTE_FLAGS(*pte);
+        char *mem = kalloc();
+        if (mem == 0)
+          panic("copyout: kalloc failed");
+
+        memmove(mem, (char *)pa0, PGSIZE);
+        *pte = PA2PTE(mem) | (flags & ~PTE_C) | PTE_W;
+        kfree((void *)pa0);
+        // Update pa0 to point to the new physical address.
+        pa0 = PTE2PA(*pte);
+      } else if (count == 1) {
+        *pte = (*pte & ~PTE_C) | PTE_W;
+      } else if (count <= 0) {
+        printf("copyout: pa0 refcount <= 0\n");
+        return -1;
+      }
+    } else if ((*pte & PTE_W) == 0) {
+      // Not marked as COW, and not writable.
+      printf("copyout: pa0 not writable\n");
+      return -1;
+    }
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
