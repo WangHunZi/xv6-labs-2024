@@ -65,33 +65,37 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if (r_scause() == 0xf) {
+  } else if (r_scause() == 0xf || r_scause() == 0xd || r_scause() == 0xc) {
     uint64 stval = r_stval();
-    pte_t *pte = walk(p->pagetable, stval, 0);
-
-    if ((*pte & PTE_C) == 0) {
-      printf("usertrap(): page fault at 0x%lx pid=%d *pte=0x%lx\n", stval, p->pid, *pte);
-      setkilled(p);
+    pte_t *pte = 0;
+    if (stval < MAXVA) {
+      pte = walk(p->pagetable, stval, 0);
     }
 
-    uint64 pa = PTE2PA(*pte);
-    int count = krefcount((void *)pa);
-
-    if (count >= 2) {
-      int flags = PTE_FLAGS(*pte);
-      if ((*pte & PTE_W) == 0) {
-        char *mem = kalloc();
-        if (mem == 0)
-          panic("usertrap(): kalloc failed");
-        memmove(mem, (char *)pa, PGSIZE);
-        *pte = PA2PTE(mem) | (flags & ~PTE_C) | PTE_W;
-        kfree((void *)pa);
-      }
-    } else if (count == 1) {
-      *pte = (*pte & ~PTE_C) | PTE_W;
-    } else {
-      printf("usertrap(): page fault at 0x%lx pid=%d pa=0x%lx refcount <= 0\n", stval, p->pid, pa);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_C) == 0) {
+      // the pte is zero, and we can't dereference it.
+      // printf("usertrap(): page fault at 0x%lx pid=%d *pte=0x%lx\n", stval, p->pid, *pte);
       setkilled(p);
+    } else {
+      uint64 pa = PTE2PA(*pte);
+      int count = krefcount((void *)pa);
+
+      if (count >= 2) {
+        int flags = PTE_FLAGS(*pte);
+        if ((*pte & PTE_W) == 0) {
+          char *mem = kalloc();
+          if (mem == 0)
+            panic("usertrap(): kalloc failed");
+          memmove(mem, (char *)pa, PGSIZE);
+          *pte = PA2PTE(mem) | (flags & ~PTE_C) | PTE_W;
+          kfree((void *)pa);
+        }
+      } else if (count == 1) {
+        *pte = (*pte & ~PTE_C) | PTE_W;
+      } else {
+        printf("usertrap(): page fault at 0x%lx pid=%d pa=0x%lx refcount <= 0\n", stval, p->pid, pa);
+        setkilled(p);
+      }
     }
   } else if((which_dev = devintr()) != 0){
     // ok
