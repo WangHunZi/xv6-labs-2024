@@ -94,28 +94,47 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(char *buf, int len)
 {
-  //
-  // Your code here.
-  //
-  // buf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after send completes.
-  //
+  acquire(&e1000_lock);
+  uint32 lastpk = regs[E1000_TDH];
+  uint32 nextpk = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
+  printf("nextpk %d, last %d\n", nextpk, lastpk);
+  if ((tx_ring[lastpk].status & E1000_TXD_STAT_DD) == 0) {
+    release(&e1000_lock);
+    return -1;
+  }
 
-  
+  if (tx_bufs[lastpk]) {
+    kfree(tx_bufs[lastpk]);
+  }
+
+  tx_ring[nextpk].addr = (uint64) buf;
+  tx_ring[nextpk].length = len;
+  // 3.3.3.1 Transmit Descriptor Command Field Format
+  tx_ring[nextpk].cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
+  regs[E1000_TDT] = nextpk;
+  release(&e1000_lock);
+
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver a buf for each packet (using net_rx()).
-  //
-
+  acquire(&e1000_lock);
+  uint32 nextpk = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  while ((rx_ring[nextpk].status & E1000_RXD_STAT_DD) == 1) {
+    net_rx(rx_bufs[nextpk], rx_ring[nextpk].length);
+    rx_bufs[nextpk] = kalloc();
+    if (!rx_bufs[nextpk]) {
+      release(&e1000_lock);
+      panic("e1000_recv: kalloc failed");
+    }
+    rx_ring[nextpk].addr = (uint64) rx_bufs[nextpk];
+    rx_ring[nextpk].status = 0;
+    regs[E1000_RDT] = nextpk;
+    nextpk = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  }
+  release(&e1000_lock);
 }
 
 void
