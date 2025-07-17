@@ -95,23 +95,22 @@ int
 e1000_transmit(char *buf, int len)
 {
   acquire(&e1000_lock);
-  uint32 lastpk = regs[E1000_TDH];
-  uint32 nextpk = (regs[E1000_TDT] + 1) % TX_RING_SIZE;
-  printf("nextpk %d, last %d\n", nextpk, lastpk);
-  if ((tx_ring[lastpk].status & E1000_TXD_STAT_DD) == 0) {
+  uint32 tail = regs[E1000_TDT];
+  if ((tx_ring[tail].status & E1000_TXD_STAT_DD) == 0) {
     release(&e1000_lock);
     return -1;
   }
 
-  if (tx_bufs[lastpk]) {
-    kfree(tx_bufs[lastpk]);
+  if (tx_bufs[tail]) {
+    kfree(tx_bufs[tail]);
   }
 
-  tx_ring[nextpk].addr = (uint64) buf;
-  tx_ring[nextpk].length = len;
-  // 3.3.3.1 Transmit Descriptor Command Field Format
-  tx_ring[nextpk].cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
-  regs[E1000_TDT] = nextpk;
+  tx_bufs[tail] = buf;
+
+  tx_ring[tail].addr = (uint64) buf;
+  tx_ring[tail].length = len;
+  tx_ring[tail].cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;
+  regs[E1000_TDT] = (tail + 1) % TX_RING_SIZE;
   release(&e1000_lock);
 
   return 0;
@@ -120,21 +119,24 @@ e1000_transmit(char *buf, int len)
 static void
 e1000_recv(void)
 {
-  acquire(&e1000_lock);
-  uint32 nextpk = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
-  while ((rx_ring[nextpk].status & E1000_RXD_STAT_DD) == 1) {
-    net_rx(rx_bufs[nextpk], rx_ring[nextpk].length);
-    rx_bufs[nextpk] = kalloc();
-    if (!rx_bufs[nextpk]) {
-      release(&e1000_lock);
+  uint32 tail = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+  while ((rx_ring[tail].status & E1000_RXD_STAT_DD)) {
+    if (rx_bufs[tail] == 0) {
+      panic("e1000_recv: no buffer for received packet");
+    }
+    net_rx(rx_bufs[tail], rx_ring[tail].length);
+
+    rx_bufs[tail] = kalloc();
+    acquire(&e1000_lock);
+    if (!rx_bufs[tail]) {
       panic("e1000_recv: kalloc failed");
     }
-    rx_ring[nextpk].addr = (uint64) rx_bufs[nextpk];
-    rx_ring[nextpk].status = 0;
-    regs[E1000_RDT] = nextpk;
-    nextpk = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    rx_ring[tail].addr = (uint64) rx_bufs[tail];
+    rx_ring[tail].status = 0;
+    regs[E1000_RDT] = tail;
+    tail = (tail + 1) % RX_RING_SIZE;
+    release(&e1000_lock);
   }
-  release(&e1000_lock);
 }
 
 void
