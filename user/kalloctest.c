@@ -93,7 +93,7 @@ void test2() {
   printf("start test2\n");  
   printf("total free number of pages: %d (out of %d)\n", free0, n);
   if(n - free0 > 1000) {
-    printf("test2 FAILED: cannot allocate enough memory");
+    printf("test2 FAILED: cannot allocate enough memory\n");
     exit(1);
   }
   for (int i = 0; i < 50; i++) {
