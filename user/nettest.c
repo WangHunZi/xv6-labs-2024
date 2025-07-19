@@ -822,6 +822,7 @@ usage()
   printf("       nettest rx\n");
   printf("       nettest rx2\n");
   printf("       nettest rxburst\n");
+  printf("       nettest ping0\n");
   printf("       nettest ping1\n");
   printf("       nettest ping2\n");
   printf("       nettest ping3\n");

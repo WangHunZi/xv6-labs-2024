@@ -17,12 +17,77 @@ static uint32 local_ip = MAKE_IP_ADDR(10, 0, 2, 15);
 // qemu host's ethernet address.
 static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
+static uint8 bind_port[65536] = { 0 };
+
 static struct spinlock netlock;
+
+struct packet {
+  char *buf;
+  int len;
+  struct packet *next;
+};
+
+struct recv {
+  int max;
+  int count;
+  struct spinlock lock;
+  struct packet *packets;
+} recvq;
+
+static void push(char *buf, int len)
+{
+  if (recvq.count >= recvq.max) {
+    printf("recvq full, dropping packet %d %d\n", recvq.count, recvq.max);
+    kfree(buf);
+    return;
+  }
+
+  acquire(&recvq.lock);
+  struct packet *p = recvq.packets, *prev = 0;
+
+  while (p) {
+    prev = p;
+    p = p->next;
+  }
+
+  if (prev == 0) {
+    recvq.packets = kalloc();
+    if (recvq.packets == 0) {
+      printf("push: kalloc failed\n");
+      release(&recvq.lock);
+      kfree(buf);
+      return;
+    }
+    recvq.packets->next = 0;
+    recvq.packets->buf = buf;
+    recvq.packets->len = len;
+  } else {
+    p = kalloc();
+    if (p == 0) {
+      printf("push: kalloc failed\n");
+      release(&recvq.lock);
+      kfree(buf);
+      return;
+    }
+    p->buf = buf;
+    p->len = len;
+    p->next = 0;
+    prev->next = p;
+  }
+  recvq.count++;
+  wakeup(&recvq);
+  release(&recvq.lock);
+}
 
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
+  initlock(&recvq.lock, "recv.lock");
+
+  recvq.max = 16;
+  recvq.count = 0;
+  recvq.packets = 0;
 }
 
 
@@ -34,11 +99,14 @@ netinit(void)
 uint64
 sys_bind(void)
 {
-  //
-  // Your code here.
-  //
-
-  return -1;
+  int port;
+  argint(0, &port);
+  
+  if (port < 0 || port >= 65536) {
+    return -1;
+  }
+  bind_port[port] = 1;
+  return port;
 }
 
 //
@@ -49,11 +117,14 @@ sys_bind(void)
 uint64
 sys_unbind(void)
 {
-  //
-  // Optional: Your code here.
-  //
-
-  return 0;
+  int port;
+  argint(0, &port);
+  
+  if (port < 0 || port >= 65536) {
+    return -1;
+  }
+  bind_port[port] = 0;
+  return port;
 }
 
 //
@@ -74,10 +145,86 @@ sys_unbind(void)
 uint64
 sys_recv(void)
 {
-  //
-  // Your code here.
-  //
-  return -1;
+  struct proc *p = myproc();
+  int dport;
+  uint64 srcaddr;
+  uint64 sportaddr;
+  uint64 bufaddr;
+  int maxlen;
+
+  argint(0, &dport);
+  argaddr(1, &srcaddr);
+  argaddr(2, &sportaddr);
+  argaddr(3, &bufaddr);
+  argint(4, &maxlen);
+
+  if (bind_port[dport] == 0) {
+    printf("recv: port %d not bound\n", dport);
+    return -1;
+  }
+
+  acquire(&recvq.lock);
+
+  struct packet *packet = 0, *prev = 0;
+  while (1) {
+    packet = recvq.packets, prev = 0;
+
+    while (packet != 0) {
+      struct eth *eth = (struct eth *)(packet->buf);
+      struct ip *ip = (struct ip *)(eth + 1);
+      struct udp *udp = (struct udp *)(ip + 1);
+      if (ntohs(udp->dport) == dport) {
+        if (prev) {
+          prev->next = packet->next ? packet->next : 0;
+        } else {
+          recvq.packets = packet->next ? packet->next : 0;
+        }
+        recvq.count--;
+        goto found;
+      }
+      prev = packet;
+      packet = packet->next;
+    }
+    sleep(&recvq, &recvq.lock);
+  }
+
+ found:
+  release(&recvq.lock);
+  struct eth *eth = (struct eth *)packet->buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+  struct udp *udp = (struct udp *)(ip + 1);
+
+  uint32 src = ntohl(ip->ip_src);
+  uint16 sport = ntohs(udp->sport);
+
+  printf("recv: got packet dport=%d src=%x sport=%d len=%d\n",
+         ntohs(udp->dport), ntohl(ip->ip_src), ntohs(udp->sport), packet->len);
+
+  if (copyout(p->pagetable, srcaddr, (char *)&src, sizeof(src)) < 0) {
+    kfree(packet->buf);
+    kfree(packet);
+    return -1;
+  }
+
+  if (copyout(p->pagetable, sportaddr, (char *)&sport, sizeof(sport)) < 0) {
+    kfree(packet->buf);
+    kfree(packet);
+    return -1;
+  }
+
+  int len = ntohs(udp->ulen) - sizeof(struct udp);
+  len = len < maxlen ? len : maxlen;
+
+  if (copyout(p->pagetable, bufaddr, (char *)(udp + 1), len) < 0) {
+    kfree(packet->buf);
+    kfree(packet);
+    return -1;
+  }
+
+  kfree(packet->buf);
+  kfree(packet);
+
+  return len;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
@@ -188,10 +335,23 @@ ip_rx(char *buf, int len)
     printf("ip_rx: received an IP packet\n");
   seen_ip = 1;
 
-  //
-  // Your code here.
-  //
-  
+  struct eth *eth = (struct eth *)buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+
+  if (ip->ip_p != IPPROTO_UDP || ip->ip_dst != ntohl(local_ip)) {
+    printf("ip_rx: protocol %d destination %d\n", ip->ip_p, ntohl(ip->ip_dst));
+    kfree(buf);
+    return;
+  }
+
+  struct udp *udp = (struct udp *)(ip + 1);
+  if (bind_port[ntohs(udp->dport)] == 0) {
+    printf("ip_rx: port %d not bound\n", ntohs(udp->dport));
+    kfree(buf);
+    return;
+  }
+
+  push(buf, len);
 }
 
 //
