@@ -29,6 +29,7 @@ struct bucket {
 };
 
 struct {
+  struct spinlock lock;
   struct buf buf[NBUF];
   struct bucket bucket[NBUCKETS];
 } bcache;
@@ -36,11 +37,18 @@ struct {
 void
 binit(void)
 {
-  for (int i = 0; i < NBUCKETS; i ++) {
-    bcache.bucket[i].head = 0;
-    char bname[16];
-    snprintf(bname, sizeof(bname), "bucket%d", i);
-    initlock(&bcache.bucket[i].lock, bname);
+  struct bucket *bkt = bcache.bucket;
+  for (struct buf *b = bcache.buf; b < (bcache.buf + NBUF); b ++) {
+    b->dev = 0;
+    b->blockno = 0;
+    b->next = bkt->head;
+    bkt->head = b;
+    initlock(&bcache.lock, "bcache");
+    initsleeplock(&b->lock, "buffer");
+  }
+
+  for (bkt = bcache.bucket; bkt < bcache.bucket + NBUCKETS; bkt ++) {
+    initlock(&bkt->lock, "bcache");
   }
 }
 
@@ -49,34 +57,63 @@ bget(uint dev, uint blockno)
 {
   struct buf *b;
 
-  struct bucket *bucket = &bcache.bucket[blockno % NBUCKETS];
-  acquire(&bucket->lock);
-  for (b = bucket->head; b; b = b->next) {
+  struct bucket *bucketA = &bcache.bucket[blockno % NBUCKETS];
+  acquire(&bucketA->lock);
+  for (b = bucketA->head; b; b = b->next) {
     if (b->dev == dev && b->blockno == blockno) {
       b->refcnt++;
-      release(&bucket->lock);
+      release(&bucketA->lock);
       acquiresleep(&b->lock);
       return b;
     }
   }
-  release(&bucket->lock);
 
-  for (b = bcache.buf; b < bcache.buf + NBUF; b++) {
-    acquire(&bucket->lock);
+  for (b = bucketA->head; b; b = b->next) {
     if (b->refcnt == 0 && b->disk == 0) {
       b->dev = dev;
       b->blockno = blockno;
       b->valid = 0;
       b->refcnt = 1;
-      b->next = 0;
-
-      b->next = bucket->head;
-      bucket->head = b;
-      release(&bucket->lock);
+      release(&bucketA->lock);
       acquiresleep(&b->lock);
       return b;
     }
-    release(&bucket->lock);
+  }
+  release(&bucketA->lock);
+
+  for (b = bcache.buf; b < (bcache.buf + NBUF); b++) {
+    struct bucket *bucketB = &bcache.bucket[b->blockno % NBUCKETS];
+    if (bucketA == bucketB)
+      continue;
+
+    acquire(&bucketA->lock);
+    acquire(&bucketB->lock);
+
+    if (b->refcnt == 0 && b->disk == 0) {
+      struct buf **pp = &bucketB->head;
+      while (*pp) {
+        if (*pp == b) {
+          *pp = b->next;
+          break;
+        }
+        pp = &(*pp)->next;
+      }
+
+      b->dev = dev;
+      b->blockno = blockno;
+      b->valid = 0;
+      b->refcnt = 1;
+
+      b->next = bucketA->head;
+      bucketA->head = b;
+
+      release(&bucketB->lock);
+      release(&bucketA->lock);
+      acquiresleep(&b->lock);
+      return b;
+    }
+    release(&bucketB->lock);
+    release(&bucketA->lock);
   }
 
   panic("bget: no buffers");
@@ -116,12 +153,6 @@ brelse(struct buf *b)
   struct bucket *bucket = &bcache.bucket[b->blockno % NBUCKETS];
   acquire(&bucket->lock);
   b->refcnt--;
-  if (b->refcnt == 0 && b->disk == 0) {
-    struct buf **prev = &bucket->head;
-    while (*prev != b)
-      prev = &((*prev)->next);
-    *prev = b->next;
-  }
   release(&bucket->lock);
 }
 
